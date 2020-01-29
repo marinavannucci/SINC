@@ -23,7 +23,7 @@ def E_step(omega, v0, v1, theta):
     return (EZ_new, Ed_new)
 
 def M_step_prec(omega, Ed, S, lamb):
-    out = omega;
+    out = omega
     pseq = range(P)
     for p in range(P):
         remove_i = np.delete(pseq, p);
@@ -43,7 +43,6 @@ def M_step_prec(omega, Ed, S, lamb):
         out[p, p] = v + univu;
 
     return ([out, omega])
-
 
 def M_step_theta(EZ, a, b):
     EZ_sum = np.sum(EZ, axis=(0, 1)) / 2
@@ -82,12 +81,47 @@ def F1(adj_true, adj_est):
     MCC = ((tp * tn) - (fp * fn)) / (np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)))
     return ([F1, MCC])
 
+def Performance_B(B_true,B_est):
+    TP = np.sum((B_true == 1) & (B_est == 1)) * 1.0
+    FP = np.sum((B_true == 0) & (B_est == 1)) * 1.0
+    FN = np.sum((B_true == 1) & (B_est == 0)) * 1.0
+    TN = np.sum((B_true == 0) & (B_est == 0)) * 1.0
+    NN = np.sum((B_true == 0)) * 1.0
+    NP = np.sum((B_true == 1)) * 1.0
+    
+    prec = TP / (TP + FP)
+    recall = TP / (TP + FN)
+    
+    F1 = 2*(prec*recall) / (prec + recall)
+    MCC = ((TP*TN) - (FP*FN)) / np.sqrt((TP + FP)*(TP + FN)*(TN + FP)*(TN + FN))
+    
+    TPR = TP / (TP + FP)
+    FPR = FP / (FP + NN)
+    return([TPR,FPR,MCC,F1])
+
+def Performance_Omega(adj_true,adj_est):
+    TP = np.sum((adj_true == 1) & (adj_est == 1)) / 2.0
+    FP = np.sum((adj_true == 0) & (adj_est == 1)) / 2.0
+    FN = np.sum((adj_true == 1) & (adj_est == 0)) / 2.0
+    TN = np.sum((adj_true == 0) & (adj_est == 0)) / 2.0
+    NN = np.sum((adj_true == 0)) / 2.0
+    NP = np.sum((adj_true == 1)) / 2.0
+    
+    prec = TP / (TP + FP)
+    recall = TP / (TP + FN)
+    
+    F1 = 2*(prec*recall) / (prec + recall)
+    MCC = ((TP*TN) - (FP*FN)) / np.sqrt((TP + FP)*(TP + FN)*(TN + FP)*(TN + FN))
+    
+    TPR = TP / (TP + FP)
+    FPR = FP / (FP + NN)
+    return([TPR,FPR,MCC,F1])
+
 def objective_z(z, *args):
 
     x = args[1]
-    mu = args[2]
-    mu_b = args[3]
-    prec = args[4]
+    mu_b = args[2]
+    prec = args[3]
     alpha = np.exp(z)
     A = z - mu_b
     A = np.matrix(A)
@@ -98,9 +132,8 @@ def objective_z(z, *args):
 
 def gradient_z(z, *args):
     x = args[1]
-    mu = args[2]
-    mu_b = args[3]
-    prec = args[4]
+    mu_b = args[2]
+    prec = args[3]
     alpha = np.exp(z)
     A = z - mu_b
     A = np.matrix(A)
@@ -131,8 +164,8 @@ def M_step_Z_parallel(args):
     mybounds = []
     for i in range(P):
         mybounds.append((None, None))
-    alpha, x, mu, mu_b, prec, init = args
-    arg = (alpha, x, mu, mu_b, prec)
+    alpha, x, mu_b, prec, init = args
+    arg = (alpha, x, mu_b, prec)
     z_est = scipy.optimize.fmin_l_bfgs_b(objective_z, fprime=gradient_z, x0=init, args=arg, approx_grad=1,
                                          bounds=mybounds)
     return (z_est[0])
@@ -145,7 +178,7 @@ def VI_VS_parallel(args):
     xtx = X.T.dot(X)
 
     mu_change = 100
-    while phi_change > .01:
+    while mu_change > .01:
         mu_old = np.copy(mu)
         for j in range(Q):
             X_temp = np.copy(X)
@@ -171,7 +204,7 @@ def VI_VS_parallel(args):
     PHI = np.squeeze(phi)
     return(mu,PHI)
 
-def EMGS_LDM(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
+def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
     #######
     # x are OTU measurements where rows are the samples
     # M are the environmental factors
@@ -202,6 +235,8 @@ def EMGS_LDM(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
     S = ((Z - centr).T).dot((Z - centr))
     sig = S / N
     omega = la.inv(sig)
+    sigs_j = np.zeros(P)
+
 
     ## v0 values
     pii = .5
@@ -213,71 +248,69 @@ def EMGS_LDM(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
     iters_total = 0
 
     while (change_B > tol_B or change_prec > tol_prec):
-	if (iters_total >= max_iters):
-	    break
-	iters_total += 1
+        if (iters_total >= max_iters):
+            break
+        iters_total += 1
+        
+        ## get variance of each row
+        pseq = range(P)
+        SIG = np.linalg.inv(omega)
+        for p in range(P):
+            remove_i = np.delete(pseq,p)
+            r11 = SIG[remove_i]
+            r11 = r11[:,remove_i]
+            r12 = SIG[p,remove_i]
+            sigs_j[p] = SIG[p,p] - r12.dot(np.linalg.inv(r11)).dot(r12)
 
-	##### update B with VI
-	B_old = np.copy(B)            
-	pool = Pool(cpus)
-	args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,]) for i in range(P)]
-	VI_update = np.asarray(pool.map(VI_VS_parallel,args))
-	B = np.squeeze(VI_update[:,0,:])
-	phi = np.squeeze(VI_update[:,1,:])
-	pool.close()
-	pool.join
+        #### update B with VI
+        B_old = np.copy(B)            
+        pool = Pool(cpus)
+        args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,]) for i in range(P)]
+        VI_update = np.asarray(pool.map(VI_VS_parallel,args))
+        B = np.squeeze(VI_update[:,0,:])
+        phi = np.squeeze(VI_update[:,1,:])
+        pool.close()
+        pool.join
 
-	B_mult = B * (phi > .50)
-	change_B = np.max(np.absolute(B_old - B))
-	mu_b = m.dot(B_mult.T)
+        B_mult = B * (phi > .50)
+        change_B = np.max(np.absolute(B_old - B))
+        mu_b = m.dot(B_mult.T)
 
-	## E Step
-	EZ, Ed = E_step(omega, v0, v1, pii)
+        ## E Step
+        EZ, Ed = E_step(omega, v0, v1, pii)
 
-	## M Step
+        ## M Step
 
-	for p in range(P):
-	    B0[p] = np.mean(Z[:,p] - mu_b[:,p])
-	    mu_b[:,p] = mu_b[:,p] + B0[p]
+        for p in range(P):
+            B0[p] = np.mean(Z[:,p] - mu_b[:,p])
+            mu_b[:,p] = mu_b[:,p] + B0[p]
 
-	## update centr
-	S = ((Z - mu_b).T).dot((Z - mu_b))
+        ## update centr
+        S = ((Z - mu_b).T).dot((Z - mu_b))
 
-	## update prec
-	change_p = 1
-	prec_old = np.copy(omega)
+        ## update prec
+        change_p = 1
+        prec_old = np.copy(omega)
 
-	for i in range(25):
-	out, omega = M_step_prec(omega, Ed, S, lamb)
-	tau = M_step_blocks(omega, Ed, 2, 2, groups)
-	pii = M_step_theta(EZ, 2, 2)
-	change_prec = np.amax(np.absolute(prec_old - omega))
+        for i in range(25):
+            out, omega = M_step_prec(omega, Ed, S, lamb)
+            pii = M_step_theta(EZ, 2, 2)
+            change_prec = np.amax(np.absolute(prec_old - omega))
 
-	## update Z
-	pool = Pool(cpus)
-	Z_old = np.copy(Z)
-	args = [(alpha[i,], x[i,], mu, mu_b[i,],omega, Z[i,]) for i in range(N)]
-	Z = np.asarray(pool.map(M_step_Z_parallel, args))
-	change_z = np.amax(np.absolute(Z_old - Z))
-	pool.close()
-	pool.join
-	Z_track[iters_total-1,:,:] = Z
-	print("change in O,B,Z",change_prec,change_B,change_z)
+        ## update Z
+        pool = Pool(cpus)
+        Z_old = np.copy(Z)
+        args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
+        Z = np.asarray(pool.map(M_step_Z_parallel, args))
+        change_z = np.amax(np.absolute(Z_old - Z))
+        pool.close()
+        pool.join
+        
+        print("Finished Iteration " + str(iters_total) + ": ","change in Omega,B,Z",change_prec,change_B,change_z)
+        
+        adj_est = EZ > .5
+        spars = np.mean(adj_est)/2
 
-
-	## get variance of each row
-	sigs_j = np.zeros(P)
-	pseq = range(P)
-	SIG = np.linalg.inv(omega)
-	for p in range(P):
-	    remove_i = np.delete(pseq,p)
-	    r11 = SIG[remove_i]
-	    r11 = r11[:,remove_i]
-	    r12 = SIG[p,remove_i]
-	    sigs_j[p] = SIG[p,p] - r12.dot(np.linalg.inv(r11))
-
-    adj_est = EZ > .5
-    spars = np.mean(adj_est)
     print("v0 = ", v0, "Sparsity = ", spars)
     return (omega, EZ, phi,B,iters_total)
 

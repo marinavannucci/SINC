@@ -3,9 +3,11 @@ import scipy.optimize
 from numpy import linalg as la
 from scipy.special import gammaln as lgamma
 from scipy.special import digamma as dgamma
-from multiprocess import Pool
+from multiprocessing import Pool
 import time
-import multiprocessing
+# import multiprocessing
+import warnings
+warnings.filterwarnings("ignore")
 
 
 def E_step(omega, v0, v1, theta):
@@ -95,8 +97,8 @@ def Performance_B(B_true,B_est):
     F1 = 2*(prec*recall) / (prec + recall)
     MCC = ((TP*TN) - (FP*FN)) / np.sqrt((TP + FP)*(TP + FN)*(TN + FP)*(TN + FN))
     
-    TPR = TP / (TP + FP)
-    FPR = FP / (FP + NN)
+    TPR = TP / (NP)
+    FPR = FP / (NN)
     return([TPR,FPR,MCC,F1])
 
 def Performance_Omega(adj_true,adj_est):
@@ -113,8 +115,8 @@ def Performance_Omega(adj_true,adj_est):
     F1 = 2*(prec*recall) / (prec + recall)
     MCC = ((TP*TN) - (FP*FN)) / np.sqrt((TP + FP)*(TP + FN)*(TN + FP)*(TN + FN))
     
-    TPR = TP / (TP + FP)
-    FPR = FP / (FP + NN)
+    TPR = TP / (NP)
+    FPR = FP / (NN)
     return([TPR,FPR,MCC,F1])
 
 def objective_z(z, *args):
@@ -170,11 +172,81 @@ def M_step_Z_parallel(args):
                                          bounds=mybounds)
     return (z_est[0])
 
+
+def ELBO_B(X,Y,mu,phi,sig_y,sig_b,v1,theta):
+    XtX = -X.T.dot(X)
+    elbo = -0.5*(np.linalg.norm(Y - X.dot(mu*phi),2))
+    for j in range(Q):
+        elbo += -(0.5/sig_y)*(XtX[j,j])*(phi[j]*(sig_b[j] + mu[j]**2)*(phi[j]*mu[j])**2) \
+            - phi[j]*np.log(phi[j]/theta) -(1 - phi[j])*np.log((1 - phi[j])/(1 - theta)) \
+            + (phi[j]/2) * (1 + np.log(sig_b[j]/(v1*sig_y)) - ((sig_b[j] + mu[j]**2)/(v1*sig_y)))
+    return(elbo)
+
+def ELBO_omega(Z,M,omega,B,B0,Ed,Ez,lam,pi,N,P,a,b):
+    X = Z - (B0 + M.dot(B.T))
+    omega2Ed = (omega**2)*Ed
+    diag_sum = np.diag(omega2Ed).sum()
+    piP = (pi/(1 - pi))*Ez
+    piP_diag_sum = np.diag(piP).sum()
+    
+    elbo = 0.5*N*np.log(np.linalg.det(omega)) - 0.5*np.trace(X.T.dot(X).dot(omega))  \
+            -0.25*(omega2Ed.sum() - diag_sum) - 0.5*lam*np.diag(omega).sum() \
+            +0.25*(np.log(piP.sum() - piP_diag_sum)) + P*(P-1)/2*np.log(1 - pi) \
+            +(a - 1)*np.log(pi) + (b - 1)*np.log(1 - pi)
+    return(elbo)
+
+def ELBO_omega(Z,M,omega,B,B0,Ed,Ez,lam,pi,N,P,a,b):
+    X = Z - (B0 + M.dot(B.T))
+    omega2Ed = (omega**2)*Ed
+    diag_sum = np.diag(omega2Ed).sum()
+    piP = (pi/(1 - pi))*Ez
+    piP_diag_sum = np.diag(piP).sum()
+    
+    elbo = 0.5*N*np.log(np.linalg.det(omega)) \
+            -0.25*(omega2Ed.sum() - diag_sum) - 0.5*lam*np.diag(omega).sum() \
+            +0.25*(np.log(piP.sum() - piP_diag_sum)) + P*(P-1)/2*np.log(1 - pi) \
+            +(a - 1)*np.log(pi) + (b - 1)*np.log(1 - pi)
+    return(elbo)
+
+def ELBO_Z(z, *args):
+    
+    args = args[0]
+    x = args[1]
+    mu_b = args[2]
+    prec = args[3]
+    alpha = np.exp(z)
+    A = z - mu_b
+    A = np.matrix(A)
+    re = - np.sum(lgamma(alpha + x) - lgamma(alpha)) + (lgamma(np.sum(alpha + x)) - lgamma(np.sum(alpha))) + np.matmul(
+        np.matmul(A, prec), A.T)
+    return (float(re))
+
+def M_step_blocks(omega, Ed, a, b, groups):
+    n_groups = len(np.unique(groups)) + 1
+    tau_small = np.ones((n_groups, n_groups)) * b
+    size = np.zeros((n_groups, n_groups))
+    for i in range(P):
+        for j in range(P):
+            if i < j:
+                tau_small[groups[i], groups[j]] = tau_small[groups[i], groups[j]] + (
+                0.5 * omega[i, j] * omega[i, j] * Ed[i, j]);
+                size[groups[i], groups[j]] = size[groups[i], groups[j]] + 0.5;
+                if groups[i] != groups[j]:
+                    tau_small[groups[j], groups[i]] = tau_small[groups[j], groups[i]] + (
+                    0.5 * omega[j, i] * omega[j, i] * Ed[j, i]);
+                    size[groups[j], groups[i]] = size[groups[j], groups[i]] + 0.5;
+    tau_small = (a - 1 + size) / tau_small
+    tau = np.zeros((P, P))
+    for i in range(P):
+        for j in range(P):
+            tau[i, j] = tau_small[groups[i], groups[j]]
+    return (tau)
+
 def VI_VS_parallel(args):
-    Y, X, v1, sig_hat, mu, phi = args
+    Y, X, v1, sig_hat, mu, phi, theta, a_gamma, b_gamma = args
     
     sig = np.ones((Q,1)) / 2500
-    theta = 0.01
+#     theta = 0.01
     xtx = X.T.dot(X)
 
     mu_change = 100
@@ -199,12 +271,15 @@ def VI_VS_parallel(args):
                 phi[j] = 1.0
 
         mu_change = np.max(abs(mu_old - mu))
-        theta = np.sum(phi) / Q
+        theta = (np.sum(phi) + a_gamma - 1) / (Q + a_gamma + b_gamma - 2)
     mu = np.squeeze(mu)
     PHI = np.squeeze(phi)
-    return(mu,PHI)
+    elbo_B = ELBO_B(X,Y,mu,phi - 0.00001,sig_hat,sig,v1,theta)
+#     print(mu.shape)
+    return(mu,PHI,np.repeat(elbo_B,Q))
 
-def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
+
+def SINC(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters, tol_prec, tol_elbo, cpus):
     #######
     # x are OTU measurements where rows are the samples
     # M are the environmental factors
@@ -233,10 +308,11 @@ def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
     mu_b = m.dot(B.T)
     centr = np.mean(Z, axis=0)
     S = ((Z - centr).T).dot((Z - centr))
-    sig = S / N
+    sig = (S + np.eye(P)*.1) / N
     omega = la.inv(sig)
     sigs_j = np.zeros(P)
-
+    elbo_score = np.array([])
+    theta = np.ones(P) * (a_gamma / (a_gamma + b_gamma))
 
     ## v0 values
     pii = .5
@@ -246,8 +322,14 @@ def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
     change_B = 10000
 
     iters_total = 0
+    
+    elbo_change = 10000
+    elbo = 0
+    tau = np.ones((P,P))
+    groups = [0]*P
 
-    while (change_B > tol_B or change_prec > tol_prec):
+#     while (change_B > tol_B or change_prec > tol_prec):
+    while (elbo_change > tol_elbo):
         if (iters_total >= max_iters):
             break
         iters_total += 1
@@ -265,20 +347,23 @@ def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
         #### update B with VI
         B_old = np.copy(B)            
         pool = Pool(cpus)
-        args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,]) for i in range(P)]
+        args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,],theta[i],a_gamma,b_gamma) for i in range(P)]
         VI_update = np.asarray(pool.map(VI_VS_parallel,args))
+#         print(VI_update.shape)
         B = np.squeeze(VI_update[:,0,:])
         phi = np.squeeze(VI_update[:,1,:])
+        elbo_B = VI_update[:,2,0].sum()
         pool.close()
         pool.join
 
-        B_mult = B * (phi > .50)
+        B_mult = B * phi
         change_B = np.max(np.absolute(B_old - B))
         mu_b = m.dot(B_mult.T)
 
         ## E Step
         EZ, Ed = E_step(omega, v0, v1, pii)
-
+        Ed = Ed / tau
+       
         ## M Step
 
         for p in range(P):
@@ -291,12 +376,159 @@ def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
         ## update prec
         change_p = 1
         prec_old = np.copy(omega)
-
-        for i in range(25):
+        prec_old_loop = np.copy(omega)
+#         for i in range(25):
+        change_prec = 10000
+        while(change_prec > tol_prec):
             out, omega = M_step_prec(omega, Ed, S, lamb)
-            pii = M_step_theta(EZ, 2, 2)
-            change_prec = np.amax(np.absolute(prec_old - omega))
+            pii = M_step_theta(EZ, a_pi, b_pi)
+            change_prec = np.amax(np.absolute(prec_old_loop - omega))
+            prec_old_loop = np.copy(omega)
+            
+        theta = (phi.sum(axis = 1) + a_gamma - 1)/(Q + a_gamma + b_gamma - 2)
+        
+        ## update Z
+#         alpha = np.exp(Z)
+        pool = Pool(cpus)
+        Z_old = np.copy(Z)
+        args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
+        Z = np.asarray(pool.map(M_step_Z_parallel, args))
+        change_z = np.amax(np.absolute(Z_old - Z))
+        pool.close()
+        pool.join
+#         args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
+        args = [(alpha[i,], x[i,], mu_b[i,],omega) for i in range(N)]
+        elbo_Z = 0
+        for n in range(N):
+            elbo_Z += -ELBO_Z(Z[n,],args[n])
+#             elbo_z = M_step_Z_parallel(args[n])
+#             elbo_Z += elbo_z.sum()
+        
+        elbo_omega = ELBO_omega(Z,m,omega,B,B0,Ed,EZ,lamb,pii,N,P,a_pi,b_pi)
+        elbo_old = np.copy(elbo)
+        elbo = elbo_B + elbo_omega + (elbo_Z/N)
+#         elbo_change = abs(elbo_old - elbo)
+        if iters_total > 1:
+            elbo_change = elbo - elbo_old
+#         elbo_change = (elbo - elbo_old)/(np.absolute(elbo_old))
+        print("ELBO:",elbo_B + elbo_omega + elbo_Z/N,"CHANGE IN ELBO:",elbo_change)
+        elbo_score = np.append(elbo_score,elbo)
+        #print("Finished Iteration " + str(iters_total) + ": ","change in Omega,B,Z",change_prec,change_B,change_z)
+        
+        adj_est = EZ > .5
+        spars = np.mean(adj_est)/2
 
+    print("v0 = ", v0, "Sparsity = ", spars,"ELBO = ",elbo)
+    return (omega, EZ, phi,B,iters_total,elbo,elbo_score)
+
+
+def SINC_update_tau(x, m, v0, v1, lamb, vB, a_gamma, b_gamma, a_pi, b_pi, a_tau, b_tau, max_iters, tol_prec, tol_elbo, cpus):
+    #######
+    # x are OTU measurements where rows are the samples
+    # M are the environmental factors
+    # v0 is the v0 value in the precision prior
+    # v1 is the v1 value in the precision prior
+    # vB is the vB value in the B coefficient prior
+    # max_iters
+    # tol_prec is how much change precision matrix can change each iteration before stopping
+    # tol_B is how much change B matrix can change each iteration before stopping
+    # lamb is the prior hyperparameter on EMGS part
+    ########
+
+    # get dimensions
+    global P, N, Q
+    P = x.shape[1]
+    N = x.shape[0]
+    Q = m.shape[1]
+
+    ## initialize values
+    global Z
+    Z = np.log(x + 1)
+    B0 = np.mean(Z,axis = 0)
+    alpha = np.exp(Z)
+    B = np.zeros((P, Q))
+    phi = np.ones((P,Q)) / 4
+    mu_b = m.dot(B.T)
+    centr = np.mean(Z, axis=0)
+    S = ((Z - centr).T).dot((Z - centr))
+    sig = (S + np.eye(P)*.1) / N
+    omega = la.inv(sig)
+    sigs_j = np.zeros(P)
+    elbo_score = np.array([])
+    theta = np.ones(P) * (a_gamma / (a_gamma + b_gamma))
+
+    ## v0 values
+    pii = .5
+    
+    change_z = 10000
+    change_prec = 10000
+    change_B = 10000
+
+    iters_total = 0
+    
+    elbo_change = 10000
+    elbo = 0
+    tau = np.ones((P,P))
+    groups = [0]*P
+
+#     while (change_B > tol_B or change_prec > tol_prec):
+    while (elbo_change > tol_elbo):
+        if (iters_total >= max_iters):
+            break
+        iters_total += 1
+        
+        ## get variance of each row
+        pseq = range(P)
+        SIG = np.linalg.inv(omega)
+        for p in range(P):
+            remove_i = np.delete(pseq,p)
+            r11 = SIG[remove_i]
+            r11 = r11[:,remove_i]
+            r12 = SIG[p,remove_i]
+            sigs_j[p] = SIG[p,p] - r12.dot(np.linalg.inv(r11)).dot(r12)
+
+        #### update B with VI
+        B_old = np.copy(B)            
+        pool = Pool(cpus)
+        args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,],theta[i],a_gamma,b_gamma) for i in range(P)]
+        VI_update = np.asarray(pool.map(VI_VS_parallel,args))
+        B = np.squeeze(VI_update[:,0,:])
+        phi = np.squeeze(VI_update[:,1,:])
+        elbo_B = VI_update[:,2,0].sum()
+        pool.close()
+        pool.join
+
+        B_mult = B * phi
+        change_B = np.max(np.absolute(B_old - B))
+        mu_b = m.dot(B_mult.T)
+
+        ## E Step
+        EZ, Ed = E_step(omega, v0, v1, pii)
+        Ed = Ed / tau
+       
+        ## M Step
+
+        for p in range(P):
+            B0[p] = np.mean(Z[:,p] - mu_b[:,p])
+            mu_b[:,p] = mu_b[:,p] + B0[p]
+
+        ## update centr
+        S = ((Z - mu_b).T).dot((Z - mu_b))
+
+        ## update prec
+        change_p = 1
+        prec_old = np.copy(omega)
+        prec_old_loop = np.copy(omega)
+        change_prec = 10000
+        while(change_prec > tol_prec):
+            out, omega = M_step_prec(omega, Ed, S, lamb)
+            pii = M_step_theta(EZ, a_pi, b_pi)
+            tau = M_step_blocks(omega, Ed, a_tau, b_tau, groups)
+            change_prec = np.amax(np.absolute(prec_old_loop - omega))
+            prec_old_loop = np.copy(omega)
+            
+        theta = (phi.sum(axis = 1) + a_gamma - 1)/(Q + a_gamma + b_gamma - 2)
+        
         ## update Z
         pool = Pool(cpus)
         Z_old = np.copy(Z)
@@ -305,12 +537,266 @@ def SINC(x, m, v0, v1, lamb, vB, max_iters, tol_prec, tol_B, cpus):
         change_z = np.amax(np.absolute(Z_old - Z))
         pool.close()
         pool.join
+        args = [(alpha[i,], x[i,], mu_b[i,],omega) for i in range(N)]
+        elbo_Z = 0
+        for n in range(N):
+            elbo_Z += -ELBO_Z(Z[n,],args[n])
         
-        print("Finished Iteration " + str(iters_total) + ": ","change in Omega,B,Z",change_prec,change_B,change_z)
+        elbo_omega = ELBO_omega(Z,m,omega,B,B0,Ed,EZ,lamb,pii,N,P,a_pi,b_pi)
+        elbo_old = np.copy(elbo)
+        elbo = elbo_B + elbo_omega + (elbo_Z/N)
+        if iters_total > 1:
+            elbo_change = elbo - elbo_old
+        print("ELBO:",elbo_B + elbo_omega + elbo_Z/N,"CHANGE IN ELBO:",elbo_change)
+        elbo_score = np.append(elbo_score,elbo)
         
         adj_est = EZ > .5
         spars = np.mean(adj_est)/2
 
-    print("v0 = ", v0, "Sparsity = ", spars)
-    return (omega, EZ, phi,B,iters_total)
+    print("v0 = ", v0, "Sparsity = ", spars,"ELBO = ",elbo)
+    return (omega, EZ, phi,B,iters_total,elbo,elbo_score)
+
+
+def SINC_fixed_B(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters, tol_prec, tol_elbo, cpus):
+    #######
+    # x are OTU measurements where rows are the samples
+    # M are the environmental factors
+    # v0 is the v0 value in the precision prior
+    # v1 is the v1 value in the precision prior
+    # vB is the vB value in the B coefficient prior
+    # max_iters
+    # tol_prec is how much change precision matrix can change each iteration before stopping
+    # tol_B is how much change B matrix can change each iteration before stopping
+    # lamb is the prior hyperparameter on EMGS part
+    ########
+
+    # get dimensions
+    global P, N, Q
+    P = x.shape[1]
+    N = x.shape[0]
+    Q = m.shape[1]
+
+    ## initialize values
+    global Z
+    Z = np.log(x + 1)
+    B0 = np.mean(Z,axis = 0)
+    alpha = np.exp(Z)
+    B = np.zeros((P, Q))
+    phi = np.ones((P,Q)) / 4
+    mu_b = m.dot(B.T)
+    centr = np.mean(Z, axis=0)
+    S = ((Z - centr).T).dot((Z - centr))
+    sig = (S + np.eye(P)*.1) / N
+    omega = la.inv(sig)
+    sigs_j = np.zeros(P)
+    elbo_score = np.array([])
+    theta = np.ones(P) * (a_gamma / (a_gamma + b_gamma))
+
+    ## v0 values
+    pii = .5
+    
+    change_z = 10000
+    change_prec = 10000
+    change_B = 10000
+
+    iters_total = 0
+    
+    elbo_change = 10000
+    elbo = 0
+    elbo_B = 0
+
+    while (elbo_change > tol_elbo):
+        if (iters_total >= max_iters):
+            break
+        iters_total += 1
+        
+        ## get variance of each row
+        pseq = range(P)
+        SIG = np.linalg.inv(omega)
+        for p in range(P):
+            remove_i = np.delete(pseq,p)
+            r11 = SIG[remove_i]
+            r11 = r11[:,remove_i]
+            r12 = SIG[p,remove_i]
+            sigs_j[p] = SIG[p,p] - r12.dot(np.linalg.inv(r11)).dot(r12)
+
+        B_mult = B * phi
+#         change_B = np.max(np.absolute(B_old - B))
+        mu_b = m.dot(B_mult.T)
+
+        ## E Step
+        EZ, Ed = E_step(omega, v0, v1, pii)
+       
+        ## M Step
+
+        for p in range(P):
+            B0[p] = np.mean(Z[:,p] - mu_b[:,p])
+            mu_b[:,p] = mu_b[:,p] + B0[p]
+
+        ## update centr
+        S = ((Z - mu_b).T).dot((Z - mu_b))
+
+        ## update prec
+        change_p = 1
+        prec_old = np.copy(omega)
+        prec_old_loop = np.copy(omega)
+        change_prec = 10000
+        while(change_prec > tol_prec):
+            out, omega = M_step_prec(omega, Ed, S, lamb)
+            pii = M_step_theta(EZ, a_pi, b_pi)
+            change_prec = np.amax(np.absolute(prec_old_loop - omega))
+            prec_old_loop = np.copy(omega)
+            
+        theta = (phi.sum(axis = 1) + a_gamma - 1)/(Q + a_gamma + b_gamma - 2)
+        
+        ## update Z
+        pool = Pool(cpus)
+        Z_old = np.copy(Z)
+        args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
+        Z = np.asarray(pool.map(M_step_Z_parallel, args))
+        change_z = np.amax(np.absolute(Z_old - Z))
+        pool.close()
+        pool.join
+        args = [(alpha[i,], x[i,], mu_b[i,],omega) for i in range(N)]
+        elbo_Z = 0
+        for n in range(N):
+            elbo_Z += -ELBO_Z(Z[n,],args[n])
+        
+        elbo_omega = ELBO_omega(Z,m,omega,B,B0,Ed,EZ,lamb,pii,N,P,a_pi,b_pi)
+        elbo_old = np.copy(elbo)
+        elbo = elbo_B + elbo_omega + (elbo_Z/N)
+        if iters_total > 1:
+            elbo_change = elbo - elbo_old
+        print(elbo_B,elbo_omega,elbo_Z/N,elbo_B + elbo_omega + elbo_Z/N,elbo_change)
+        elbo_score = np.append(elbo_score,elbo)
+
+        
+        adj_est = EZ > .5
+        spars = np.mean(adj_est)/2
+
+    print("v0 = ", v0, "Sparsity = ", spars,"ELBO = ",elbo)
+    return (omega, EZ, phi,B,iters_total,elbo,elbo_score)
+
+
+def SINC_fixed_Omega(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters, tol_prec, tol_elbo, cpus):
+    #######
+    # x are OTU measurements where rows are the samples
+    # M are the environmental factors
+    # v0 is the v0 value in the precision prior
+    # v1 is the v1 value in the precision prior
+    # vB is the vB value in the B coefficient prior
+    # max_iters
+    # tol_prec is how much change precision matrix can change each iteration before stopping
+    # tol_B is how much change B matrix can change each iteration before stopping
+    # lamb is the prior hyperparameter on EMGS part
+    ########
+
+    # get dimensions
+    global P, N, Q
+    P = x.shape[1]
+    N = x.shape[0]
+    Q = m.shape[1]
+
+    ## initialize values
+    global Z
+    Z = np.log(x + 1)
+    B0 = np.mean(Z,axis = 0)
+    alpha = np.exp(Z)
+    B = np.zeros((P, Q))
+    phi = np.ones((P,Q)) / 4
+    mu_b = m.dot(B.T)
+    centr = np.mean(Z, axis=0)
+    S = ((Z - centr).T).dot((Z - centr))
+    sig = np.eye(P)
+    omega = la.inv(sig)
+    sigs_j = np.zeros(P)
+    elbo_score = np.array([])
+    theta = np.ones(P) * (a_gamma / (a_gamma + b_gamma))
+
+    ## v0 values
+    pii = .5
+    
+    change_z = 10000
+    change_prec = 10000
+    change_B = 10000
+
+    iters_total = 0
+    
+    elbo_change = 10000
+    elbo = 0
+    elbo_B = 0
+    elbo_omega = 0
+
+#     while (change_B > tol_B or change_prec > tol_prec):
+    while (elbo_change > tol_elbo):
+        if (iters_total >= max_iters):
+            break
+        iters_total += 1
+        
+        ## get variance of each row
+        pseq = range(P)
+        SIG = np.linalg.inv(omega)
+        for p in range(P):
+            remove_i = np.delete(pseq,p)
+            r11 = SIG[remove_i]
+            r11 = r11[:,remove_i]
+            r12 = SIG[p,remove_i]
+            sigs_j[p] = SIG[p,p] - r12.dot(np.linalg.inv(r11)).dot(r12)
+
+        #### update B with VI
+        B_old = np.copy(B)            
+        pool = Pool(cpus)
+        args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,],theta[i],a_gamma,b_gamma) for i in range(P)]
+        VI_update = np.asarray(pool.map(VI_VS_parallel,args))
+        B = np.squeeze(VI_update[:,0,:])
+        phi = np.squeeze(VI_update[:,1,:])
+        elbo_B = VI_update[:,2,0].sum()
+        pool.close()
+        pool.join
+
+        B_mult = B * phi
+        change_B = np.max(np.absolute(B_old - B))
+        mu_b = m.dot(B_mult.T)
+
+        ## E Step
+       
+        ## M Step
+
+        for p in range(P):
+            B0[p] = np.mean(Z[:,p] - mu_b[:,p])
+            mu_b[:,p] = mu_b[:,p] + B0[p]
+
+        ## update centr
+        S = ((Z - mu_b).T).dot((Z - mu_b))
+
+
+            
+        theta = (phi.sum(axis = 1) + a_gamma - 1)/(Q + a_gamma + b_gamma - 2)
+        
+        ## update Z
+#         alpha = np.exp(Z)
+        pool = Pool(cpus)
+        Z_old = np.copy(Z)
+        args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
+        Z = np.asarray(pool.map(M_step_Z_parallel, args))
+        change_z = np.amax(np.absolute(Z_old - Z))
+        pool.close()
+        pool.join
+#         args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
+        args = [(alpha[i,], x[i,], mu_b[i,],omega) for i in range(N)]
+        elbo_Z = 0
+        for n in range(N):
+            elbo_Z += -ELBO_Z(Z[n,],args[n])
+
+        
+
+        elbo_old = np.copy(elbo)
+        elbo = elbo_B + elbo_omega + (elbo_Z/N)
+        if iters_total > 1:
+            elbo_change = elbo - elbo_old
+        print(elbo_B,elbo_omega,elbo_Z/N,elbo_B + elbo_omega + elbo_Z/N,elbo_change)
+        elbo_score = np.append(elbo_score,elbo)
+        
+    print("v0 = ", v0, "Sparsity = ", 0.00,"ELBO = ",elbo)
+    return ( phi,B,iters_total,elbo,elbo_score)
 

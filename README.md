@@ -1,7 +1,9 @@
 # Simultaneous Inference of Networks and their Covariates (SINC)
-SINC Algorithm from the paper "Latent Network Estimation and Variable Selection for Compositional Data via Variational EM"
+SINC Algorithm from the paper "Latent Network Estimation and Variable Selection for Compositional Data via Variational EM", revised for Journal of Computational and Graphical Statistics.
 
-Python code and simulations used in the above mentioned paper. The following items can be found in this repository
+All functions needed to run SINC are found in SINC_functions.py
+
+SINC depends on numpy, scipy, multiprocess, and multiprocessing, and will need to be installed before using
 
 ## SINC_functions.py
 

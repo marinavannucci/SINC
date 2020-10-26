@@ -176,7 +176,6 @@ def M_step_Z_parallel(args):
 def ELBO_B(X,Y,mu,phi,sig_y,sig_b,v1,theta):
     XtX = -X.T.dot(X)
     elbo = -0.5*(np.linalg.norm(Y - X.dot(mu*phi),2))
-    phi = np.maximum(phi,np.zeros(Q) + 0.0000000001)
     for j in range(Q):
         elbo += -(0.5/sig_y)*(XtX[j,j])*(phi[j]*(sig_b[j] + mu[j]**2)*(phi[j]*mu[j])**2) \
             - phi[j]*np.log(phi[j]/theta) -(1 - phi[j])*np.log((1 - phi[j])/(1 - theta)) \
@@ -352,7 +351,7 @@ def SINC(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters, tol_prec, 
         VI_update = np.asarray(pool.map(VI_VS_parallel,args))
 #         print(VI_update.shape)
         B = np.squeeze(VI_update[:,0,:])
-        phi = np.maximum(np.zeros((P,Q)),np.squeeze(VI_update[:,1,:]))
+        phi = np.squeeze(VI_update[:,1,:])
         elbo_B = VI_update[:,2,0].sum()
         pool.close()
         pool.join
@@ -494,7 +493,7 @@ def SINC_update_tau(x, m, v0, v1, lamb, vB, a_gamma, b_gamma, a_pi, b_pi, a_tau,
         args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,],theta[i],a_gamma,b_gamma) for i in range(P)]
         VI_update = np.asarray(pool.map(VI_VS_parallel,args))
         B = np.squeeze(VI_update[:,0,:])
-        phi = np.maximum(np.zeros((P,Q)),np.squeeze(VI_update[:,1,:]))
+        phi = np.squeeze(VI_update[:,1,:])
         elbo_B = VI_update[:,2,0].sum()
         pool.close()
         pool.join
@@ -750,7 +749,7 @@ def SINC_fixed_Omega(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters
         args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,],theta[i],a_gamma,b_gamma) for i in range(P)]
         VI_update = np.asarray(pool.map(VI_VS_parallel,args))
         B = np.squeeze(VI_update[:,0,:])
-        phi = phi = np.maximum(np.zeros((P,Q)),np.squeeze(VI_update[:,1,:]))
+        phi = np.squeeze(VI_update[:,1,:])
         elbo_B = VI_update[:,2,0].sum()
         pool.close()
         pool.join

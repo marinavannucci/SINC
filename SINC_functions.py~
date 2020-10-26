@@ -492,7 +492,6 @@ def SINC_update_tau(x, m, v0, v1, lamb, vB, a_gamma, b_gamma, a_pi, b_pi, a_tau,
         pool = Pool(cpus)
         args = [(Z[:,i] - B0[i],m,vB,sigs_j[i],B[i,],phi[i,],theta[i],a_gamma,b_gamma) for i in range(P)]
         VI_update = np.asarray(pool.map(VI_VS_parallel,args))
-#         print(VI_update.shape)
         B = np.squeeze(VI_update[:,0,:])
         phi = np.squeeze(VI_update[:,1,:])
         elbo_B = VI_update[:,2,0].sum()
@@ -520,7 +519,6 @@ def SINC_update_tau(x, m, v0, v1, lamb, vB, a_gamma, b_gamma, a_pi, b_pi, a_tau,
         change_p = 1
         prec_old = np.copy(omega)
         prec_old_loop = np.copy(omega)
-#         for i in range(25):
         change_prec = 10000
         while(change_prec > tol_prec):
             out, omega = M_step_prec(omega, Ed, S, lamb)
@@ -532,7 +530,6 @@ def SINC_update_tau(x, m, v0, v1, lamb, vB, a_gamma, b_gamma, a_pi, b_pi, a_tau,
         theta = (phi.sum(axis = 1) + a_gamma - 1)/(Q + a_gamma + b_gamma - 2)
         
         ## update Z
-#         alpha = np.exp(Z)
         pool = Pool(cpus)
         Z_old = np.copy(Z)
         args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
@@ -540,24 +537,18 @@ def SINC_update_tau(x, m, v0, v1, lamb, vB, a_gamma, b_gamma, a_pi, b_pi, a_tau,
         change_z = np.amax(np.absolute(Z_old - Z))
         pool.close()
         pool.join
-#         args = [(alpha[i,], x[i,], mu_b[i,],omega, Z[i,]) for i in range(N)]
         args = [(alpha[i,], x[i,], mu_b[i,],omega) for i in range(N)]
         elbo_Z = 0
         for n in range(N):
             elbo_Z += -ELBO_Z(Z[n,],args[n])
-#             elbo_z = M_step_Z_parallel(args[n])
-#             elbo_Z += elbo_z.sum()
         
         elbo_omega = ELBO_omega(Z,m,omega,B,B0,Ed,EZ,lamb,pii,N,P,a_pi,b_pi)
         elbo_old = np.copy(elbo)
         elbo = elbo_B + elbo_omega + (elbo_Z/N)
-#         elbo_change = abs(elbo_old - elbo)
         if iters_total > 1:
             elbo_change = elbo - elbo_old
-#         elbo_change = (elbo - elbo_old)/(np.absolute(elbo_old))
-        print(elbo_B,elbo_omega,elbo_Z/N,elbo_B + elbo_omega + elbo_Z/N,elbo_change)
+        print("ELBO:",elbo_B + elbo_omega + elbo_Z/N,"CHANGE IN ELBO:",elbo_change)
         elbo_score = np.append(elbo_score,elbo)
-        #print("Finished Iteration " + str(iters_total) + ": ","change in Omega,B,Z",change_prec,change_B,change_z)
         
         adj_est = EZ > .5
         spars = np.mean(adj_est)/2
@@ -649,7 +640,6 @@ def SINC_fixed_B(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters, to
         change_p = 1
         prec_old = np.copy(omega)
         prec_old_loop = np.copy(omega)
-#         for i in range(25):
         change_prec = 10000
         while(change_prec > tol_prec):
             out, omega = M_step_prec(omega, Ed, S, lamb)
@@ -677,7 +667,7 @@ def SINC_fixed_B(x, m, v0, v1, lamb, vB,a_gamma,b_gamma,a_pi,b_pi, max_iters, to
         elbo = elbo_B + elbo_omega + (elbo_Z/N)
         if iters_total > 1:
             elbo_change = elbo - elbo_old
-        print("ELBO:",elbo_B + elbo_omega + elbo_Z/N,"CHANGE IN ELBO:",elbo_change)
+        print(elbo_B,elbo_omega,elbo_Z/N,elbo_B + elbo_omega + elbo_Z/N,elbo_change)
         elbo_score = np.append(elbo_score,elbo)
 
         
